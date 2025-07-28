@@ -1,0 +1,979 @@
+openapi: 3.0.3
+info:
+  title: Claude Relay API
+  description: |
+    Claude Code 智能代理服务 - 支持官方 Claude API 和第三方模型（魔搭 Qwen 等）的统一代理
+    
+    ## 功能特性
+    - **智能路由**: 根据配置自动选择 Claude 官方 API 或第三方模型
+    - **流式响应**: 支持实时流式响应，低延迟
+    - **多账号管理**: 支持多个 Claude Code 账号的 OAuth 认证
+    - **Web 管理**: 完整的管理中心，支持模型供应商和账号管理
+    
+    ## 支持的模型供应商
+    - **官方 Claude**: Claude 3.5 Sonnet、Claude 3 等
+    - **魔搭 Qwen**: Qwen3-Coder-480B、Qwen2.5-Coder-32B 等
+    - **智谱 AI**: GLM-4、GLM-4-Air、GLM-4-Flash
+    - **OpenAI Compatible**: 支持 OpenAI API 格式的其他服务
+  version: 1.0.0
+  contact:
+    name: Claude Relay Team
+  license:
+    name: MIT
+servers:
+  - url: https://claude-relay-backend.117yelixin.workers.dev
+    description: Production server
+  - url: http://localhost:8787
+    description: Development server
+
+paths:
+  # ==================== 系统端点 ====================
+  /health:
+    get:
+      summary: 健康检查
+      description: 检查 API 服务状态
+      tags:
+        - System
+      responses:
+        '200':
+          description: 服务正常运行
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "ok"
+                message: "Claude Relay Backend is running"
+                version: "1.0.0"
+                timestamp: "2025-01-27T00:00:00.000Z"
+
+  # ==================== Claude API 代理 ====================
+  /v1/messages:
+    post:
+      summary: Claude API 智能代理
+      description: |
+        智能代理 Claude API 请求，根据管理中心配置自动路由到：
+        - **官方 Claude API**: 使用 OAuth 认证的官方 Claude 模型
+        - **魔搭 Qwen**: 支持 Qwen3-Coder-480B 等模型，OpenAI 格式自动转换
+        - **其他供应商**: 智谱 AI、OpenAI Compatible 等
+        
+        支持流式和非流式响应，自动处理格式转换。
+      tags:
+        - Claude API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaudeMessageRequest'
+            example:
+              model: "claude-3-5-sonnet-20241022"
+              max_tokens: 1024
+              messages:
+                - role: "user"
+                  content: "Hello, write a simple Python function"
+              stream: true
+      responses:
+        '200':
+          description: |
+            成功响应，根据后端配置返回不同格式：
+            - **官方 Claude**: Claude API 原生格式
+            - **第三方模型**: OpenAI 格式（带格式标记头）
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ClaudeApiResponse'
+                  - $ref: '#/components/schemas/OpenAIApiResponse'
+              example:
+                id: "msg_123"
+                type: "message" 
+                role: "assistant"
+                content:
+                  - type: "text"
+                    text: "def hello_world():\n    return 'Hello, World!'"
+            text/event-stream:
+              schema:
+                type: string
+                description: 服务器发送事件流（SSE）
+                example: |
+                  data: {"type":"content_block_delta","index":0,"delta":{"type":"text","text":"def"}}
+                  
+                  data: {"type":"content_block_delta","index":0,"delta":{"type":"text","text":" hello"}}
+                  
+                  data: [DONE]
+          headers:
+            X-Provider-Format:
+              description: 原始响应格式标记
+              schema:
+                type: string
+                enum: [claude, openai]
+              example: "openai"
+            X-Target-Format:
+              description: 目标格式标记
+              schema:
+                type: string
+                enum: [claude, openai] 
+              example: "claude"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==================== 管理中心 API ====================
+  /api/admin/auth:
+    post:
+      summary: 管理员认证
+      description: 验证管理员用户名和密码
+      tags:
+        - Admin - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminAuthRequest'
+            example:
+              username: "admin"
+              password: "password123"
+      responses:
+        '200':
+          description: 认证成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  authenticated: true
+                message: "登录成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/admin/dashboard:
+    get:
+      summary: 获取仪表板数据
+      description: 获取管理中心仪表板的统计数据
+      tags:
+        - Admin - Dashboard
+      responses:
+        '200':
+          description: 仪表板数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  hasClaudeToken: true
+                  tokenExpired: false
+                  providerCount: 2
+                  activeConnections: 5
+                  currentModel:
+                    id: "qwen_001"
+                    name: "魔搭 Qwen"
+                    type: "provider"
+                    providerId: "qwen_001"
+                  claudeAccountsCount: 3
+                  activeClaudeAccounts: 2
+                message: "仪表板数据获取成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+
+  /api/admin/providers:
+    get:
+      summary: 获取模型供应商列表
+      description: 获取所有已配置的模型供应商
+      tags:
+        - Admin - Providers
+      responses:
+        '200':
+          description: 供应商列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  - id: "qwen_001"
+                    name: "魔搭 Qwen"
+                    type: "qwen"
+                    endpoint: "https://api-inference.modelscope.cn/v1/chat/completions"
+                    status: "active"
+                    createdAt: 1704067200000
+                message: "供应商列表获取成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+
+    post:
+      summary: 添加模型供应商
+      description: 添加新的第三方模型供应商
+      tags:
+        - Admin - Providers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddProviderRequest'
+            example:
+              name: "我的魔搭账号"
+              type: "qwen"
+              endpoint: "https://api-inference.modelscope.cn/v1/chat/completions"
+              apiKey: "your-api-key-here"
+      responses:
+        '200':
+          description: 供应商添加成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  id: "qwen_002"
+                  name: "我的魔搭账号"
+                  type: "qwen"
+                  status: "active"
+                message: "供应商添加成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/admin/providers/{id}:
+    delete:
+      summary: 删除模型供应商
+      description: 删除指定的模型供应商
+      tags:
+        - Admin - Providers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 供应商 ID
+          example: "qwen_001"
+      responses:
+        '200':
+          description: 供应商删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data: null
+                message: "供应商删除成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/admin/models:
+    get:
+      summary: 获取可用模型列表
+      description: 获取所有可用的模型列表（官方 + 第三方）
+      tags:
+        - Admin - Models
+      responses:
+        '200':
+          description: 模型列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  - id: "official"
+                    name: "官方 Claude"
+                    type: "official"
+                  - id: "qwen_001"
+                    name: "魔搭 Qwen"
+                    type: "provider"
+                    providerId: "qwen_001"
+                message: "模型列表获取成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+
+  /api/admin/select-model:
+    post:
+      summary: 选择默认模型
+      description: 设置默认使用的模型（官方 Claude 或第三方供应商）
+      tags:
+        - Admin - Models
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelectModelRequest'
+            example:
+              modelId: "qwen_001"
+              type: "provider"
+              providerId: "qwen_001"
+      responses:
+        '200':
+          description: 模型选择成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  currentModel:
+                    id: "qwen_001"
+                    name: "魔搭 Qwen"
+                    type: "provider"
+                    providerId: "qwen_001"
+                message: "模型选择成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+
+  /api/admin/claude-accounts:
+    get:
+      summary: 获取 Claude 账号列表
+      description: 获取所有配置的 Claude Code 账号
+      tags:
+        - Admin - Claude Accounts
+      responses:
+        '200':
+          description: Claude 账号列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  - id: "claude_001"
+                    name: "主账号"
+                    description: "主要使用的 Claude 账号"
+                    status: "active"
+                    tokenInfo:
+                      hasToken: true
+                      isExpired: false
+                      expiresAt: 1704067200000
+                      scope: "org:create_api_key user:profile user:inference"
+                    createdAt: 1704060000000
+                    lastActiveAt: 1704066000000
+                message: "Claude 账号列表获取成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+
+    post:
+      summary: 添加 Claude 账号
+      description: 添加新的 Claude Code 账号
+      tags:
+        - Admin - Claude Accounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddClaudeAccountRequest'
+            example:
+              name: "开发账号"
+              description: "用于开发测试的账号"
+      responses:
+        '200':
+          description: 账号添加成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  id: "claude_002"
+                  name: "开发账号"
+                  status: "inactive"
+                message: "Claude 账号添加成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+
+  /api/admin/claude-accounts/{id}:
+    delete:
+      summary: 删除 Claude 账号
+      description: 删除指定的 Claude Code 账号
+      tags:
+        - Admin - Claude Accounts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Claude 账号 ID
+          example: "claude_001"
+      responses:
+        '200':
+          description: 账号删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/admin/claude-accounts/generate-auth:
+    post:
+      summary: 生成 OAuth 授权链接
+      description: 为指定 Claude 账号生成 OAuth 授权链接和 PKCE 参数
+      tags:
+        - Admin - Claude Accounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - accountId
+              properties:
+                accountId:
+                  type: string
+                  description: Claude 账号 ID
+              example:
+                accountId: "claude_001"
+      responses:
+        '200':
+          description: 授权链接生成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  authUrl: "https://claude.ai/oauth/authorize?client_id=xxx&redirect_uri=xxx&response_type=code&scope=xxx&state=xxx&code_challenge=xxx&code_challenge_method=S256"
+                  pkce:
+                    codeVerifier: "abc123..."
+                    codeChallenge: "xyz789..."
+                    state: "random_state_123"
+                  instructions: "请在新窗口中完成授权，然后从地址栏复制 code 参数的值"
+                message: "授权链接生成成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+
+  /api/admin/claude-accounts/exchange-token:
+    post:
+      summary: 交换 OAuth 授权码
+      description: 使用授权码和 PKCE 参数获取 Claude 访问令牌
+      tags:
+        - Admin - Claude Accounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaudeAccountOAuthRequest'
+            example:
+              accountId: "claude_001"
+              code: "auth_code_from_callback"
+              pkce:
+                codeVerifier: "abc123..."
+                codeChallenge: "xyz789..."
+                state: "random_state_123"
+      responses:
+        '200':
+          description: 令牌交换成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  accountId: "claude_001"
+                  expiresAt: 1704067200000
+                  scope: "org:create_api_key user:profile user:inference"
+                message: "Claude 账号授权成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/admin/claude-accounts/{id}/refresh:
+    post:
+      summary: 刷新 Claude 账号令牌
+      description: 刷新指定 Claude 账号的访问令牌
+      tags:
+        - Admin - Claude Accounts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Claude 账号 ID
+          example: "claude_001"
+      responses:
+        '200':
+          description: 令牌刷新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  accountId: "claude_001"
+                  expiresAt: 1704153600000
+                  refreshedAt: 1704067200000
+                message: "Claude 账号令牌刷新成功"
+                timestamp: "2025-01-27T00:00:00.000Z"
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+# ==================== 组件定义 ====================
+components:
+  schemas:
+    # 基础响应格式
+    SuccessResponse:
+      type: object
+      required:
+        - success
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+          description: 操作是否成功
+        data:
+          description: 响应数据，格式根据具体接口而定
+        message:
+          type: string
+          description: 成功消息
+          example: "操作成功"
+        timestamp:
+          type: string
+          format: date-time
+          description: 响应时间戳
+          example: "2025-01-27T00:00:00.000Z"
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: false
+          description: 操作是否成功
+        error:
+          type: object
+          required:
+            - type
+            - message
+          properties:
+            type:
+              type: string
+              description: 错误类型
+              enum:
+                - INVALID_REQUEST
+                - UNAUTHORIZED  
+                - TOKEN_EXPIRED
+                - TOKEN_EXCHANGE_FAILED
+                - RESOURCE_NOT_FOUND
+                - INTERNAL_ERROR
+              example: "INVALID_REQUEST"
+            message:
+              type: string
+              description: 错误消息
+              example: "请求参数无效"
+            details:
+              description: 错误详情（可选）
+        timestamp:
+          type: string
+          format: date-time
+          description: 错误时间戳
+          example: "2025-01-27T00:00:00.000Z"
+
+    # 系统相关
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - message
+        - version
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          description: 服务状态
+          example: "ok"
+        message:
+          type: string
+          description: 状态消息
+          example: "Claude Relay Backend is running"
+        version:
+          type: string
+          description: 服务版本
+          example: "1.0.0"
+        timestamp:
+          type: string
+          format: date-time
+          description: 检查时间戳
+          example: "2025-01-27T00:00:00.000Z"
+
+    # Claude API 相关
+    ClaudeMessageRequest:
+      type: object
+      required:
+        - model
+        - max_tokens
+        - messages
+      properties:
+        model:
+          type: string
+          description: 模型名称（将根据管理中心配置自动路由）
+          example: "claude-3-5-sonnet-20241022"
+        max_tokens:
+          type: integer
+          minimum: 1
+          maximum: 8192
+          description: 最大 token 数量
+          example: 1024
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          description: 对话消息列表
+        stream:
+          type: boolean
+          description: 是否使用流式响应
+          default: false
+          example: true
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          description: 温度参数，控制响应的随机性
+          example: 0.7
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Top-p 采样参数
+          example: 0.9
+        stop_sequences:
+          type: array
+          items:
+            type: string
+          description: 停止序列
+          example: ["\n\n"]
+        system:
+          type: string
+          description: 系统提示词
+          example: "You are a helpful coding assistant."
+
+    ChatMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system]
+          description: 消息角色
+          example: "user"
+        content:
+          oneOf:
+            - type: string
+              description: 文本内容
+              example: "Hello, write a Python function"
+            - type: array
+              items:
+                type: object
+              description: 复杂内容（文本、图片等）
+
+    ClaudeApiResponse:
+      type: object
+      description: Claude API 原生响应格式
+      properties:
+        id:
+          type: string
+          example: "msg_123"
+        type:
+          type: string
+          example: "message"
+        role:
+          type: string
+          example: "assistant"
+        content:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                example: "text"
+              text:
+                type: string
+                example: "def hello_world():\n    return 'Hello, World!'"
+
+    OpenAIApiResponse:
+      type: object
+      description: OpenAI 格式响应（第三方供应商）
+      properties:
+        id:
+          type: string
+          example: "chatcmpl-123"
+        object:
+          type: string
+          example: "chat.completion"
+        created:
+          type: integer
+          example: 1704067200
+        model:
+          type: string
+          example: "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+                example: 0
+              message:
+                type: object
+                properties:
+                  role:
+                    type: string
+                    example: "assistant"
+                  content:
+                    type: string
+                    example: "def hello_world():\n    return 'Hello, World!'"
+              finish_reason:
+                type: string
+                example: "stop"
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+              example: 10
+            completion_tokens:
+              type: integer
+              example: 20
+            total_tokens:
+              type: integer
+              example: 30
+
+    # 管理中心相关
+    AdminAuthRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          description: 管理员用户名
+          example: "admin"
+        password:
+          type: string
+          description: 管理员密码
+          example: "password123"
+
+    AddProviderRequest:
+      type: object
+      required:
+        - name
+        - type
+        - endpoint
+        - apiKey
+      properties:
+        name:
+          type: string
+          description: 供应商名称
+          example: "我的魔搭账号"
+        type:
+          type: string
+          enum: [qwen, zhipu, openai]
+          description: 供应商类型
+          example: "qwen"
+        endpoint:
+          type: string
+          format: uri
+          description: API 端点 URL
+          example: "https://api-inference.modelscope.cn/v1/chat/completions"
+        apiKey:
+          type: string
+          description: API 密钥
+          example: "your-api-key-here"
+
+    SelectModelRequest:
+      type: object
+      required:
+        - modelId
+        - type
+      properties:
+        modelId:
+          type: string
+          description: 模型 ID
+          example: "qwen_001"
+        type:
+          type: string
+          enum: [official, provider]
+          description: 模型类型
+          example: "provider"
+        providerId:
+          type: string
+          description: 供应商 ID（type 为 provider 时必填）
+          example: "qwen_001"
+
+    AddClaudeAccountRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: 账号名称
+          example: "主账号"
+        description:
+          type: string
+          description: 账号描述
+          example: "主要使用的 Claude 账号"
+
+    ClaudeAccountOAuthRequest:
+      type: object
+      required:
+        - accountId
+        - code
+        - pkce
+      properties:
+        accountId:
+          type: string
+          description: Claude 账号 ID
+          example: "claude_001"
+        code:
+          type: string
+          description: OAuth 授权码
+          example: "auth_code_from_callback"
+        pkce:
+          $ref: '#/components/schemas/PKCEParams'
+
+    PKCEParams:
+      type: object
+      required:
+        - codeVerifier
+        - codeChallenge
+        - state
+      properties:
+        codeVerifier:
+          type: string
+          description: PKCE 代码验证器
+          example: "abc123..."
+        codeChallenge:
+          type: string
+          description: PKCE 代码挑战
+          example: "xyz789..."
+        state:
+          type: string
+          description: OAuth 状态参数
+          example: "random_state_123"
+
+  responses:
+    # 通用错误响应
+    ValidationError:
+      description: 请求参数验证失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              type: "INVALID_REQUEST"
+              message: "请求参数无效"
+            timestamp: "2025-01-27T00:00:00.000Z"
+
+    UnauthorizedError:
+      description: 认证失败或权限不足
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              type: "UNAUTHORIZED"
+              message: "认证失败"
+            timestamp: "2025-01-27T00:00:00.000Z"
+
+    NotFoundError:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              type: "RESOURCE_NOT_FOUND"
+              message: "资源不存在"
+            timestamp: "2025-01-27T00:00:00.000Z"
+
+    RateLimitError:
+      description: 请求频率超限
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              type: "CLAUDE_API_ERROR"
+              message: "请求频率超限，请稍后重试"
+            timestamp: "2025-01-27T00:00:00.000Z"
+
+    InternalError:
+      description: 内部服务器错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              type: "INTERNAL_ERROR"
+              message: "服务器内部错误"
+            timestamp: "2025-01-27T00:00:00.000Z"
+
+  securitySchemes:
+    AdminAuth:
+      type: http
+      scheme: basic
+      description: 管理中心基础认证（环境变量配置的用户名密码）
+
+# ==================== 标签定义 ====================
+tags:
+  - name: System
+    description: 系统状态相关接口
+  - name: Claude API
+    description: Claude API 智能代理接口
+  - name: Admin - Authentication
+    description: 管理中心认证相关接口
+  - name: Admin - Dashboard
+    description: 管理中心仪表板接口
+  - name: Admin - Providers
+    description: 模型供应商管理接口
+  - name: Admin - Models
+    description: 模型选择管理接口
+  - name: Admin - Claude Accounts
+    description: Claude 账号管理接口
+
+# ==================== 安全配置 ====================
+security:
+  - AdminAuth: []
