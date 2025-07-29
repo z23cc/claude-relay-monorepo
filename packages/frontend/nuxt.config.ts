@@ -33,6 +33,13 @@ export default defineNuxtConfig({
       },
       // 减少chunk大小阈值
       chunkSizeWarningLimit: 1000
+    },
+    // WSL 环境下的热重载配置
+    server: {
+      watch: {
+        usePolling: true,
+        interval: 100
+      }
     }
   },
   

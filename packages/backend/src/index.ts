@@ -3,6 +3,7 @@ import { cors } from 'hono/cors'
 import { adminRoutes } from './routes/admin'
 import { claudeRoutes } from './routes/claude'
 import { errorHandler } from './middleware/result-handler'
+import { AdminService } from './services/admin'
 import type { Bindings } from './types/env'
 
 // ==================== 应用初始化 ====================
@@ -71,17 +72,36 @@ app.notFound((c) => {
 export default {
   fetch: app.fetch,
   
-  // 定时任务 - Claude 账号 Token 自动刷新
+  // 定时任务 - Claude 账号 Token 自动刷新（每6小时执行一次）
   async scheduled(controller: any, env: Bindings, ctx: any) {
     console.log('定时任务开始执行 - Claude 账号 Token 自动刷新')
     
     try {
-      // TODO: 实现 AdminService 的批量 token 刷新功能
-      console.log('暂时跳过 - 等待实现多账号 token 自动刷新')
+      const adminService = new AdminService(env.CLAUDE_RELAY_ADMIN_KV)
+      
+      // 获取所有 Claude 账号
+      const accounts = await adminService.getClaudeAccounts()
+      console.log(`发现 ${accounts.length} 个 Claude 账号`)
+      
+      let successCount = 0
+      let failureCount = 0
+      
+      // 对每个账号尝试刷新 token
+      for (const account of accounts) {
+        try {
+          console.log(`正在刷新账号: ${account.name} (${account.id})`)
+          await adminService.refreshClaudeAccountToken(account.id)
+          successCount++
+          console.log(`✅ 成功刷新账号: ${account.name}`)
+        } catch (error) {
+          failureCount++
+          console.error(`❌ 刷新账号 ${account.name} 失败: ${error instanceof Error ? error.message : '未知错误'}`)
+        }
+      }
+      
+      console.log(`定时任务执行完成 - 成功: ${successCount}, 失败: ${failureCount}`)
     } catch (error) {
-      console.error(`令牌刷新失败: ${error instanceof Error ? error.message : '未知错误'}`)
+      console.error(`定时任务执行失败: ${error instanceof Error ? error.message : '未知错误'}`)
     }
-    
-    console.log('定时任务执行完成')
   }
 }

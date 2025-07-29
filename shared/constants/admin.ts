@@ -13,9 +13,9 @@ export const ADMIN_API_ENDPOINTS = {
 
 // 预设供应商配置
 export const PROVIDER_CONFIGS = {
-  qwen: {
-    name: '魔搭 Qwen',
-    description: '魔搭社区 Qwen 系列模型',
+  modelScope: {
+    name: '魔搭',
+    description: '魔搭社区',
     icon: 'from-blue-500 to-purple-600',
     endpoint: 'https://api-inference.modelscope.cn/v1/chat/completions',
     models: ['Qwen/Qwen3-Coder-480B-A35B-Instruct', 'Qwen/Qwen2.5-Coder-32B-Instruct', 'Qwen/Qwen2.5-72B-Instruct'],

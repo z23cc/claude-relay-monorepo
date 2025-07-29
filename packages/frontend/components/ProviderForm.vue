@@ -44,9 +44,9 @@
         <input type="url" 
                v-model="form.endpoint"
                required
-               :readonly="!isEdit && currentProviderConfig?.endpoint"
+               :readonly="isEndpointReadonly"
                class="block w-full px-3 py-3 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition duration-200"
-               :class="{ 'bg-gray-50': !isEdit && currentProviderConfig?.endpoint }"
+               :class="{ 'bg-gray-50': isEndpointReadonly }"
                placeholder="https://api.example.com/v1/chat/completions">
       </div>
 
@@ -66,10 +66,21 @@
             <option value="custom">自定义模型...</option>
           </select>
         </div>
-        <div v-if="availableModels.length === 0 || form.model === 'custom'">
+        <!-- 当没有预设模型时，直接编辑 form.model -->
+        <div v-if="availableModels.length === 0">
+          <input type="text" 
+                 v-model="form.model"
+                 required
+                 autocomplete="off"
+                 class="block w-full px-3 py-3 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition duration-200"
+                 placeholder="请输入模型名称，例如：gpt-3.5-turbo">
+        </div>
+        <!-- 当选择自定义模型时，编辑 customModel -->
+        <div v-else-if="form.model === 'custom'">
           <input type="text" 
                  v-model="customModel"
                  required
+                 autocomplete="off"
                  class="block w-full px-3 py-3 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition duration-200 mt-2"
                  placeholder="请输入模型名称，例如：gpt-3.5-turbo">
         </div>
@@ -89,6 +100,7 @@
           <input type="password" 
                  v-model="form.apiKey"
                  required
+                 autocomplete="new-password"
                  class="block w-full pl-10 pr-3 py-3 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition duration-200"
                  placeholder="请输入您的 API Key">
         </div>
@@ -154,13 +166,22 @@ const availableModels = computed(() => {
   return currentProviderConfig.value?.models || []
 })
 
+// 判断 endpoint 是否应该是只读的
+const isEndpointReadonly = computed(() => {
+  // 编辑模式下可以编辑
+  if (isEdit.value) return false
+  // 新增模式下，如果配置中有 endpoint 且不为空，则只读
+  return !!(currentProviderConfig.value?.endpoint)
+})
+
 // 监听选择的供应商类型，自动填充配置
 watch(selectedProviderType, (newType) => {
   if (newType && !isEdit.value) {
     const config = PROVIDER_CONFIGS[newType as keyof typeof PROVIDER_CONFIGS]
     if (config) {
       form.value.name = config.name
-      form.value.endpoint = config.endpoint
+      // 只有当配置中有 endpoint 时才自动填充
+      form.value.endpoint = config.endpoint || ''
       form.value.model = ''
     }
   }
@@ -177,13 +198,15 @@ watch(() => form.value.model, (newModel) => {
 
 // 监听自定义模型输入
 watch(customModel, (newValue) => {
-  if (form.value.model === 'custom' || availableModels.value.length === 0) {
+  if (form.value.model === 'custom' && availableModels.value.length > 0) {
     form.value.model = newValue
   }
 })
 
 const selectProviderType = (type: string) => {
   selectedProviderType.value = type
+  console.log('Selected provider type:', type)
+  console.log('Provider config:', PROVIDER_CONFIGS[type as keyof typeof PROVIDER_CONFIGS])
 }
 
 const handleSubmit = () => {
