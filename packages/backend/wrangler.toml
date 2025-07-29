@@ -5,8 +5,8 @@ compatibility_date = "2025-07-25"
 # 管理中心统一 KV 存储（存储账号、配置、tokens等所有数据）
 [[kv_namespaces]]
 binding = "CLAUDE_RELAY_ADMIN_KV"
-id = "7542a354766e48f09da8560f7318b56b"
-preview_id = "7542a354766e48f09da8560f7318b56b"
+id = "3a7a9b425a5a4598af2a681526156af8"
+preview_id = "3a7a9b425a5a4598af2a681526156af8"
 
 # 定时任务配置 - 每6小时刷新一次 token
 [triggers]
@@ -15,7 +15,7 @@ crons = ["0 */6 * * *"]
 # 生产环境配置
 [vars]
 NODE_ENV = "production"
-FRONTEND_URL = "https://claude-relay-frontend.pages.dev"
+FRONTEND_URL = "https://ccproxy.winter-017.workers.dev"
 # 管理员认证
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "password123"
